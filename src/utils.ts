@@ -1,11 +1,18 @@
 import type { 
   BuildlogFile, 
-  BuildlogEvent, 
+  BuildlogStep, 
   BuildlogStats,
-  ValidationResult 
+  BuildlogSizeCategory,
+  ValidationResult,
+  ValidationWarning
 } from './types';
 import { BuildlogFileSchema } from './schema';
-import { BUILDLOG_EXTENSIONS, BUILDLOG_MIME_TYPE } from './constants';
+import { 
+  BUILDLOG_EXTENSIONS, 
+  BUILDLOG_MIME_TYPE,
+  BUILDLOG_MAX_SLIM_SIZE_BYTES,
+  BUILDLOG_MAX_FULL_SIZE_BYTES
+} from './constants';
 
 /**
  * Check if a filename has a valid buildlog extension
@@ -36,7 +43,29 @@ export function validateBuildlog(data: unknown): ValidationResult {
   const result = BuildlogFileSchema.safeParse(data);
   
   if (result.success) {
-    return { valid: true };
+    const buildlog = result.data as BuildlogFile;
+    const warnings: ValidationWarning[] = [];
+    
+    // Check if slim buildlog is too large
+    const jsonSize = JSON.stringify(data).length;
+    if (buildlog.format === 'slim' && jsonSize > BUILDLOG_MAX_SLIM_SIZE_BYTES) {
+      warnings.push({
+        path: 'format',
+        message: `Slim buildlog is ${formatBytes(jsonSize)}, which exceeds the recommended ${formatBytes(BUILDLOG_MAX_SLIM_SIZE_BYTES)} limit`,
+        suggestion: 'Consider removing full diffs or AI responses, or switch to full format'
+      });
+    }
+    
+    // Check if full buildlog is too large
+    if (buildlog.format === 'full' && jsonSize > BUILDLOG_MAX_FULL_SIZE_BYTES) {
+      warnings.push({
+        path: 'format',
+        message: `Full buildlog is ${formatBytes(jsonSize)}, which exceeds the recommended ${formatBytes(BUILDLOG_MAX_FULL_SIZE_BYTES)} limit`,
+        suggestion: 'Consider splitting into multiple buildlogs'
+      });
+    }
+    
+    return { valid: true, warnings: warnings.length > 0 ? warnings : undefined };
   }
   
   return {
@@ -74,45 +103,90 @@ export function safeParseBuildlog(json: string): BuildlogFile | null {
  */
 export function computeStats(buildlog: BuildlogFile): BuildlogStats {
   const stats: BuildlogStats = {
+    format: buildlog.format,
     durationSeconds: buildlog.metadata.durationSeconds,
-    eventCount: buildlog.events.length,
+    stepCount: buildlog.steps.length,
     promptCount: 0,
-    responseCount: 0,
-    fileCount: buildlog.finalState.files.length,
-    linesAdded: 0,
-    linesRemoved: 0,
-    languages: [],
+    actionCount: 0,
+    terminalCount: 0,
+    noteCount: 0,
+    filesCreated: buildlog.outcome.filesCreated,
+    filesModified: buildlog.outcome.filesModified,
+    isReplicable: buildlog.outcome.canReplicate,
   };
 
-  const languageSet = new Set<string>();
-
-  for (const event of buildlog.events) {
-    switch (event.type) {
+  for (const step of buildlog.steps) {
+    switch (step.type) {
       case 'prompt':
         stats.promptCount++;
         break;
-      case 'ai_response':
-        stats.responseCount++;
+      case 'action':
+        stats.actionCount++;
         break;
-      case 'code_change':
-        if (event.linesChanged) {
-          stats.linesAdded += event.linesChanged.added;
-          stats.linesRemoved += event.linesChanged.removed;
-        }
+      case 'terminal':
+        stats.terminalCount++;
         break;
-      case 'file_create':
-        languageSet.add(event.language);
+      case 'note':
+        stats.noteCount++;
         break;
     }
   }
-
-  for (const file of buildlog.finalState.files) {
-    languageSet.add(file.language);
-  }
-
-  stats.languages = Array.from(languageSet).sort();
   
   return stats;
+}
+
+/**
+ * Estimate size category for a buildlog
+ */
+export function estimateBuildlogSize(buildlog: BuildlogFile): BuildlogSizeCategory {
+  const jsonSize = JSON.stringify(buildlog).length;
+  
+  if (jsonSize < 10 * 1024) return 'tiny';      // < 10KB
+  if (jsonSize < 50 * 1024) return 'small';     // < 50KB
+  if (jsonSize < 500 * 1024) return 'medium';   // < 500KB
+  return 'large';                                // >= 500KB
+}
+
+/**
+ * Check if a buildlog is replicable (can be followed by another agent)
+ */
+export function isReplicable(buildlog: BuildlogFile): boolean {
+  // Must have at least one prompt
+  const hasPrompts = buildlog.steps.some(s => s.type === 'prompt');
+  if (!hasPrompts) return false;
+  
+  // Must have an outcome
+  if (!buildlog.outcome) return false;
+  
+  // Check the explicit replicable flag
+  return buildlog.outcome.canReplicate && buildlog.metadata.replicable;
+}
+
+/**
+ * Convert a buildlog to slim format (strips full mode data)
+ */
+export function toSlim(buildlog: BuildlogFile): BuildlogFile {
+  if (buildlog.format === 'slim') {
+    return buildlog;
+  }
+  
+  return {
+    ...buildlog,
+    format: 'slim',
+    steps: buildlog.steps.map(step => {
+      if (step.type === 'action') {
+        // Remove full mode fields
+        const { aiResponse, diffs, ...slimAction } = step;
+        return slimAction;
+      }
+      if (step.type === 'terminal') {
+        // Remove full mode fields
+        const { output, exitCode, ...slimTerminal } = step;
+        return slimTerminal;
+      }
+      return step;
+    }),
+  };
 }
 
 /**
@@ -121,7 +195,24 @@ export function computeStats(buildlog: BuildlogFile): BuildlogStats {
 export function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
+  const secs = Math.floor(seconds % 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
+/**
+ * Format duration as MM:SS or HH:MM:SS
+ */
+export function formatDurationClock(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
 
   if (hours > 0) {
     return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
@@ -130,41 +221,42 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
- * Get event icon for display
+ * Format bytes to human readable string
  */
-export function getEventIcon(event: BuildlogEvent): string {
-  const icons: Record<BuildlogEvent['type'], string> = {
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Get step icon for display
+ */
+export function getStepIcon(step: BuildlogStep): string {
+  const icons: Record<BuildlogStep['type'], string> = {
     prompt: '💬',
-    ai_response: '🤖',
-    code_change: '✏️',
-    file_create: '📄',
-    file_delete: '🗑️',
-    file_rename: '📁',
+    action: '⚡',
     terminal: '🖥️',
     note: '📝',
     checkpoint: '🚩',
     error: '❌',
   };
-  return icons[event.type];
+  return icons[step.type];
 }
 
 /**
- * Get human readable event type label
+ * Get human readable step type label
  */
-export function getEventLabel(event: BuildlogEvent): string {
-  const labels: Record<BuildlogEvent['type'], string> = {
+export function getStepLabel(step: BuildlogStep): string {
+  const labels: Record<BuildlogStep['type'], string> = {
     prompt: 'Prompt',
-    ai_response: 'AI Response',
-    code_change: 'Code Change',
-    file_create: 'File Created',
-    file_delete: 'File Deleted',
-    file_rename: 'File Renamed',
+    action: 'Action',
     terminal: 'Terminal',
     note: 'Note',
     checkpoint: 'Checkpoint',
     error: 'Error',
   };
-  return labels[event.type];
+  return labels[step.type];
 }
 
 /**
@@ -254,3 +346,13 @@ export function slugify(title: string): string {
     .replace(/^-|-$/g, '')
     .slice(0, 50);
 }
+
+// =============================================================================
+// LEGACY EXPORTS (Deprecated - for v1 compatibility)
+// =============================================================================
+
+/** @deprecated Use getStepIcon instead */
+export const getEventIcon = getStepIcon;
+
+/** @deprecated Use getStepLabel instead */
+export const getEventLabel = getStepLabel;

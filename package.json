@@ -1,7 +1,7 @@
 {
   "name": "@buildlog/types",
-  "version": "1.0.0",
-  "description": "Type definitions and schemas for the .buildlog file format",
+  "version": "2.0.0",
+  "description": "Portable workflow format for AI-assisted development",
   "author": "Buildlog <hello@buildlog.ai>",
   "license": "MIT",
   "repository": {
@@ -11,10 +11,12 @@
   "homepage": "https://buildlog.ai",
   "keywords": [
     "buildlog",
-    "vibe-coding",
+    "workflow",
     "ai",
     "typescript",
-    "schema"
+    "schema",
+    "agent",
+    "replicable"
   ],
   "type": "module",
   "main": "./dist/index.cjs",

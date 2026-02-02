@@ -4,6 +4,8 @@ import { z } from 'zod';
 // ENUMS & PRIMITIVES
 // =============================================================================
 
+export const BuildlogFormatSchema = z.enum(["slim", "full"]);
+
 export const EditorTypeSchema = z.enum([
   "cursor", "vscode", "windsurf", "zed", "neovim", "jetbrains", "openclaw", "other"
 ]);
@@ -12,16 +14,16 @@ export const AIProviderSchema = z.enum([
   "claude", "gpt", "copilot", "gemini", "other"
 ]);
 
-export const ChangeSourceSchema = z.enum([
-  "manual", "ai_accepted", "ai_partial", "ai_rejected_then_manual"
-]);
-
 export const NoteCategorySchema = z.enum([
-  "explanation", "gotcha", "tip", "warning", "todo"
+  "explanation", "tip", "warning", "decision", "todo"
 ]);
 
-export const ErrorCategorySchema = z.enum([
-  "build", "runtime", "lint", "type", "test", "other"
+export const TerminalOutcomeSchema = z.enum([
+  "success", "failure", "partial"
+]);
+
+export const OutcomeStatusSchema = z.enum([
+  "success", "partial", "failure", "abandoned"
 ]);
 
 // =============================================================================
@@ -32,163 +34,73 @@ export const BuildlogAuthorSchema = z.object({
   name: z.string().optional(),
   username: z.string().optional(),
   url: z.string().url().optional(),
-  avatarUrl: z.string().url().optional(),
-});
-
-export const BuildlogProjectSchema = z.object({
-  name: z.string().optional(),
-  repository: z.string().optional(),
-  branch: z.string().optional(),
-  commit: z.string().optional(),
-});
-
-export const FileSnapshotSchema = z.object({
-  path: z.string().min(1),
-  content: z.string(),
-  language: z.string(),
-  sizeBytes: z.number().int().nonnegative().optional(),
-  hash: z.string().optional(),
-});
-
-export const BuildlogStateSchema = z.object({
-  files: z.array(FileSnapshotSchema),
-  fileTree: z.array(z.string()).optional(),
-});
-
-export const TextSelectionSchema = z.object({
-  filePath: z.string(),
-  startLine: z.number().int().nonnegative(),
-  endLine: z.number().int().nonnegative(),
-  text: z.string(),
-});
-
-export const CodeBlockSchema = z.object({
-  language: z.string(),
-  code: z.string(),
-  filePath: z.string().optional(),
-  startLine: z.number().int().nonnegative().optional(),
-});
-
-export const TokenUsageSchema = z.object({
-  input: z.number().int().nonnegative().optional(),
-  output: z.number().int().nonnegative().optional(),
-});
-
-export const LinesChangedSchema = z.object({
-  added: z.number().int().nonnegative(),
-  removed: z.number().int().nonnegative(),
-});
-
-export const NoteReferenceSchema = z.object({
-  filePath: z.string(),
-  startLine: z.number().int().nonnegative().optional(),
-  endLine: z.number().int().nonnegative().optional(),
 });
 
 // =============================================================================
-// EVENT SCHEMAS
+// STEP SCHEMAS
 // =============================================================================
 
-const BaseEventSchema = z.object({
+const BaseStepSchema = z.object({
   id: z.string().uuid(),
   timestamp: z.number().nonnegative(),
   sequence: z.number().int().nonnegative(),
 });
 
-export const PromptEventSchema = BaseEventSchema.extend({
+export const PromptStepSchema = BaseStepSchema.extend({
   type: z.literal("prompt"),
   content: z.string().min(1),
-  contextFiles: z.array(z.string()).optional(),
-  selection: TextSelectionSchema.optional(),
-  provider: AIProviderSchema.optional(),
-  model: z.string().optional(),
+  context: z.array(z.string()).optional(),
+  intent: z.string().optional(),
 });
 
-export const AIResponseEventSchema = BaseEventSchema.extend({
-  type: z.literal("ai_response"),
-  content: z.string(),
-  codeBlocks: z.array(CodeBlockSchema).optional(),
-  promptEventId: z.string().uuid().optional(),
-  provider: AIProviderSchema.optional(),
-  model: z.string().optional(),
-  tokenUsage: TokenUsageSchema.optional(),
+export const ActionStepSchema = BaseStepSchema.extend({
+  type: z.literal("action"),
+  summary: z.string().min(1),
+  filesCreated: z.array(z.string()).optional(),
+  filesModified: z.array(z.string()).optional(),
+  filesDeleted: z.array(z.string()).optional(),
+  packagesAdded: z.array(z.string()).optional(),
+  packagesRemoved: z.array(z.string()).optional(),
+  approach: z.string().optional(),
+  aiResponse: z.string().optional(),
+  diffs: z.record(z.string()).optional(),
 });
 
-export const CodeChangeEventSchema = BaseEventSchema.extend({
-  type: z.literal("code_change"),
-  filePath: z.string().min(1),
-  diff: z.string(),
-  source: ChangeSourceSchema,
-  linesChanged: LinesChangedSchema.optional(),
-  aiResponseEventId: z.string().uuid().optional(),
-});
-
-export const FileCreateEventSchema = BaseEventSchema.extend({
-  type: z.literal("file_create"),
-  filePath: z.string().min(1),
-  content: z.string(),
-  language: z.string(),
-  source: z.enum(["manual", "ai_accepted"]),
-  aiResponseEventId: z.string().uuid().optional(),
-});
-
-export const FileDeleteEventSchema = BaseEventSchema.extend({
-  type: z.literal("file_delete"),
-  filePath: z.string().min(1),
-  previousContent: z.string().optional(),
-});
-
-export const FileRenameEventSchema = BaseEventSchema.extend({
-  type: z.literal("file_rename"),
-  fromPath: z.string().min(1),
-  toPath: z.string().min(1),
-});
-
-export const TerminalEventSchema = BaseEventSchema.extend({
+export const TerminalStepSchema = BaseStepSchema.extend({
   type: z.literal("terminal"),
   command: z.string().min(1),
+  outcome: TerminalOutcomeSchema,
+  summary: z.string().optional(),
   output: z.string().optional(),
   exitCode: z.number().int().optional(),
-  cwd: z.string().optional(),
-  durationSeconds: z.number().nonnegative().optional(),
 });
 
-export const NoteEventSchema = BaseEventSchema.extend({
+export const NoteStepSchema = BaseStepSchema.extend({
   type: z.literal("note"),
   content: z.string().min(1),
   category: NoteCategorySchema.optional(),
-  reference: NoteReferenceSchema.optional(),
 });
 
-export const CheckpointEventSchema = BaseEventSchema.extend({
+export const CheckpointStepSchema = BaseStepSchema.extend({
   type: z.literal("checkpoint"),
   name: z.string().min(1),
-  description: z.string().optional(),
-  state: BuildlogStateSchema.optional(),
+  summary: z.string().min(1),
 });
 
-export const ErrorEventSchema = BaseEventSchema.extend({
+export const ErrorStepSchema = BaseStepSchema.extend({
   type: z.literal("error"),
   message: z.string().min(1),
-  category: ErrorCategorySchema,
-  filePath: z.string().optional(),
-  line: z.number().int().nonnegative().optional(),
-  stackTrace: z.string().optional(),
-  resolved: z.boolean().optional(),
-  resolvedByEventId: z.string().uuid().optional(),
+  resolution: z.string().optional(),
+  resolved: z.boolean(),
 });
 
-export const BuildlogEventSchema = z.discriminatedUnion("type", [
-  PromptEventSchema,
-  AIResponseEventSchema,
-  CodeChangeEventSchema,
-  FileCreateEventSchema,
-  FileDeleteEventSchema,
-  FileRenameEventSchema,
-  TerminalEventSchema,
-  NoteEventSchema,
-  CheckpointEventSchema,
-  ErrorEventSchema,
+export const BuildlogStepSchema = z.discriminatedUnion("type", [
+  PromptStepSchema,
+  ActionStepSchema,
+  TerminalStepSchema,
+  NoteStepSchema,
+  CheckpointStepSchema,
+  ErrorStepSchema,
 ]);
 
 // =============================================================================
@@ -201,15 +113,28 @@ export const BuildlogMetadataSchema = z.object({
   description: z.string().max(2000).optional(),
   author: BuildlogAuthorSchema.optional(),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime().optional(),
   durationSeconds: z.number().int().nonnegative(),
   editor: EditorTypeSchema,
-  aiProviders: z.array(AIProviderSchema).optional(),
-  primaryLanguage: z.string().optional(),
-  languages: z.array(z.string()).optional(),
+  aiProvider: AIProviderSchema,
+  model: z.string().optional(),
+  language: z.string().optional(),
+  framework: z.string().optional(),
   tags: z.array(z.string().max(50)).max(20).optional(),
-  project: BuildlogProjectSchema.optional(),
-  custom: z.record(z.unknown()).optional(),
+  replicable: z.boolean(),
+  dependencies: z.array(z.string()).optional(),
+});
+
+// =============================================================================
+// OUTCOME SCHEMA
+// =============================================================================
+
+export const BuildlogOutcomeSchema = z.object({
+  status: OutcomeStatusSchema,
+  summary: z.string().min(1),
+  filesCreated: z.number().int().nonnegative(),
+  filesModified: z.number().int().nonnegative(),
+  canReplicate: z.boolean(),
+  replicationNotes: z.string().optional(),
 });
 
 // =============================================================================
@@ -217,13 +142,20 @@ export const BuildlogMetadataSchema = z.object({
 // =============================================================================
 
 export const BuildlogFileSchema = z.object({
-  version: z.literal("1.0.0"),
+  version: z.literal("2.0.0"),
+  format: BuildlogFormatSchema,
   metadata: BuildlogMetadataSchema,
-  initialState: BuildlogStateSchema,
-  events: z.array(BuildlogEventSchema),
-  finalState: BuildlogStateSchema,
+  steps: z.array(BuildlogStepSchema),
+  outcome: BuildlogOutcomeSchema,
 });
 
 // Type inference from schemas
 export type BuildlogFileFromSchema = z.infer<typeof BuildlogFileSchema>;
-export type BuildlogEventFromSchema = z.infer<typeof BuildlogEventSchema>;
+export type BuildlogStepFromSchema = z.infer<typeof BuildlogStepSchema>;
+
+// =============================================================================
+// LEGACY SCHEMAS (Deprecated - for v1 compatibility reference only)
+// =============================================================================
+
+/** @deprecated Use BuildlogStepSchema instead */
+export const BuildlogEventSchema = BuildlogStepSchema;

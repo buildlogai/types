@@ -1,6 +1,8 @@
 /**
- * @buildlog/types
+ * @buildlog/types v2.0.0
  * Type definitions for the .buildlog file format
+ * 
+ * Slim workflow format - prompts as artifacts, summaries over snapshots
  */
 
 // =============================================================================
@@ -12,20 +14,27 @@
  */
 export interface BuildlogFile {
   /** Schema version (semver) */
-  version: "1.0.0";
+  version: "2.0.0";
+  
+  /** Capture format - slim (default) or full */
+  format: BuildlogFormat;
   
   /** Session metadata */
   metadata: BuildlogMetadata;
   
-  /** Starting state of tracked files */
-  initialState: BuildlogState;
+  /** Ordered list of workflow steps */
+  steps: BuildlogStep[];
   
-  /** Ordered list of events that occurred during the session */
-  events: BuildlogEvent[];
-  
-  /** Ending state of tracked files */
-  finalState: BuildlogState;
+  /** Session outcome summary */
+  outcome: BuildlogOutcome;
 }
+
+/**
+ * Capture format type
+ * - slim: Prompts + summaries only (default, 2-50KB typical)
+ * - full: Includes full AI responses and diffs (opt-in, larger files)
+ */
+export type BuildlogFormat = "slim" | "full";
 
 /**
  * Metadata about the recording session
@@ -46,46 +55,38 @@ export interface BuildlogMetadata {
   /** When the session was recorded (ISO 8601) */
   createdAt: string;
   
-  /** When the file was last modified (ISO 8601) */
-  updatedAt?: string;
-  
   /** Total session duration in seconds */
   durationSeconds: number;
   
   /** Editor/IDE used */
   editor: EditorType;
   
-  /** AI provider(s) used */
-  aiProviders?: AIProvider[];
+  /** Primary AI provider used */
+  aiProvider: AIProvider;
+  
+  /** Model identifier (e.g., "claude-sonnet-4", "gpt-4o") */
+  model?: string;
   
   /** Primary programming language */
-  primaryLanguage?: string;
+  language?: string;
   
-  /** All languages detected */
-  languages?: string[];
+  /** Framework used (e.g., "nextjs", "react", "express") */
+  framework?: string;
   
   /** User-applied tags for discovery */
   tags?: string[];
   
-  /** Project/repository information */
-  project?: BuildlogProject;
+  /** Can another agent follow this workflow? */
+  replicable: boolean;
   
-  /** Arbitrary key-value pairs for extensibility */
-  custom?: Record<string, unknown>;
+  /** Other buildlogs this builds upon (URLs or IDs) */
+  dependencies?: string[];
 }
 
 export interface BuildlogAuthor {
   name?: string;
   username?: string;
   url?: string;
-  avatarUrl?: string;
-}
-
-export interface BuildlogProject {
-  name?: string;
-  repository?: string;
-  branch?: string;
-  commit?: string;
 }
 
 export type EditorType = 
@@ -106,250 +107,111 @@ export type AIProvider =
   | "other";
 
 // =============================================================================
-// STATE SNAPSHOTS
+// STEPS (Workflow Steps - renamed from Events)
 // =============================================================================
 
 /**
- * Snapshot of file system state at a point in time
+ * Union type of all possible workflow steps
  */
-export interface BuildlogState {
-  /** List of file snapshots */
-  files: FileSnapshot[];
-  
-  /** Working directory structure (file tree without content) */
-  fileTree?: string[];
-}
+export type BuildlogStep =
+  | PromptStep
+  | ActionStep
+  | TerminalStep
+  | NoteStep
+  | CheckpointStep
+  | ErrorStep;
 
 /**
- * A single file's content at a point in time
+ * Base fields present on all steps
  */
-export interface FileSnapshot {
-  /** Relative path from workspace root */
-  path: string;
-  
-  /** Full file content */
-  content: string;
-  
-  /** Language identifier for syntax highlighting */
-  language: string;
-  
-  /** File size in bytes */
-  sizeBytes?: number;
-  
-  /** SHA-256 hash of content (for integrity checking) */
-  hash?: string;
-}
-
-// =============================================================================
-// EVENTS
-// =============================================================================
-
-/**
- * Union type of all possible events
- */
-export type BuildlogEvent =
-  | PromptEvent
-  | AIResponseEvent
-  | CodeChangeEvent
-  | FileCreateEvent
-  | FileDeleteEvent
-  | FileRenameEvent
-  | TerminalEvent
-  | NoteEvent
-  | CheckpointEvent
-  | ErrorEvent;
-
-/**
- * Base fields present on all events
- */
-export interface BaseEvent {
-  /** Unique event identifier (UUID v4) */
+export interface BaseStep {
+  /** Unique step identifier (UUID v4) */
   id: string;
   
   /** Seconds elapsed since session start */
   timestamp: number;
   
-  /** Event sequence number (0-indexed) */
+  /** Step sequence number (0-indexed) */
   sequence: number;
 }
 
 /**
- * User prompt sent to AI
+ * User prompt sent to AI - THE PRIMARY ARTIFACT
+ * Always captured in full - prompts are the real artifact
  */
-export interface PromptEvent extends BaseEvent {
+export interface PromptStep extends BaseStep {
   type: "prompt";
   
-  /** The prompt text */
+  /** The full prompt text (always captured) */
   content: string;
   
-  /** Files explicitly attached/referenced as context */
-  contextFiles?: string[];
+  /** File names referenced as context (NOT contents) */
+  context?: string[];
   
-  /** Selected text that was highlighted when prompting */
-  selection?: TextSelection;
-  
-  /** Which AI provider received this prompt */
-  provider?: AIProvider;
-  
-  /** Model identifier if known */
-  model?: string;
-}
-
-export interface TextSelection {
-  filePath: string;
-  startLine: number;
-  endLine: number;
-  text: string;
+  /** What the user is trying to accomplish */
+  intent?: string;
 }
 
 /**
- * AI response to a prompt
+ * Summary of what the AI did - NOT full response or diffs
  */
-export interface AIResponseEvent extends BaseEvent {
-  type: "ai_response";
+export interface ActionStep extends BaseStep {
+  type: "action";
   
-  /** The AI's text response */
-  content: string;
+  /** Human/agent readable summary: "Created REST API with 4 endpoints" */
+  summary: string;
   
-  /** Code blocks extracted from the response */
-  codeBlocks?: CodeBlock[];
+  /** Paths of files created (just paths, not contents) */
+  filesCreated?: string[];
   
-  /** ID of the prompt this responds to */
-  promptEventId?: string;
+  /** Paths of files modified (just paths, not contents) */
+  filesModified?: string[];
   
-  /** Which AI provider generated this */
-  provider?: AIProvider;
+  /** Paths of files deleted */
+  filesDeleted?: string[];
   
-  /** Model identifier if known */
-  model?: string;
+  /** Packages added (e.g., ["stripe", "zod"]) */
+  packagesAdded?: string[];
   
-  /** Token usage if available */
-  tokenUsage?: TokenUsage;
-}
-
-export interface CodeBlock {
-  /** Programming language */
-  language: string;
-  /** The code content */
-  code: string;
-  /** Target file path if AI specified one */
-  filePath?: string;
-  /** Start line if AI specified line numbers */
-  startLine?: number;
-}
-
-export interface TokenUsage {
-  input?: number;
-  output?: number;
+  /** Packages removed */
+  packagesRemoved?: string[];
+  
+  /** Key decisions or approaches taken */
+  approach?: string;
+  
+  /** Full AI response text - ONLY in full mode */
+  aiResponse?: string;
+  
+  /** File diffs - ONLY in full mode */
+  diffs?: Record<string, string>;
 }
 
 /**
- * Code modification in an existing file
+ * Terminal command execution - command and outcome, not full output
  */
-export interface CodeChangeEvent extends BaseEvent {
-  type: "code_change";
-  
-  /** File that was changed */
-  filePath: string;
-  
-  /** Unified diff format */
-  diff: string;
-  
-  /** How the change was made */
-  source: ChangeSource;
-  
-  /** Lines changed summary */
-  linesChanged?: LinesChanged;
-  
-  /** ID of AI response that suggested this change (if applicable) */
-  aiResponseEventId?: string;
-}
-
-export type ChangeSource = 
-  | "manual" 
-  | "ai_accepted" 
-  | "ai_partial" 
-  | "ai_rejected_then_manual";
-
-export interface LinesChanged {
-  added: number;
-  removed: number;
-}
-
-/**
- * New file creation
- */
-export interface FileCreateEvent extends BaseEvent {
-  type: "file_create";
-  
-  /** Path of new file */
-  filePath: string;
-  
-  /** Initial content */
-  content: string;
-  
-  /** Language for syntax highlighting */
-  language: string;
-  
-  /** How the file was created */
-  source: "manual" | "ai_accepted";
-  
-  /** ID of AI response that suggested this file (if applicable) */
-  aiResponseEventId?: string;
-}
-
-/**
- * File deletion
- */
-export interface FileDeleteEvent extends BaseEvent {
-  type: "file_delete";
-  
-  /** Path of deleted file */
-  filePath: string;
-  
-  /** Content at time of deletion (for undo/reference) */
-  previousContent?: string;
-}
-
-/**
- * File rename/move
- */
-export interface FileRenameEvent extends BaseEvent {
-  type: "file_rename";
-  
-  /** Original path */
-  fromPath: string;
-  
-  /** New path */
-  toPath: string;
-}
-
-/**
- * Terminal command execution
- */
-export interface TerminalEvent extends BaseEvent {
+export interface TerminalStep extends BaseStep {
   type: "terminal";
   
   /** Command that was run */
   command: string;
   
-  /** Terminal output (may be truncated) */
+  /** Command outcome */
+  outcome: "success" | "failure" | "partial";
+  
+  /** Summary of result (e.g., "Installed 3 packages" or "Build failed: type error") */
+  summary?: string;
+  
+  /** Full terminal output - ONLY in full mode */
   output?: string;
   
-  /** Exit code if process completed */
+  /** Exit code - ONLY in full mode */
   exitCode?: number;
-  
-  /** Working directory */
-  cwd?: string;
-  
-  /** Duration in seconds */
-  durationSeconds?: number;
 }
 
 /**
- * User annotation/commentary
+ * Human annotation/commentary
  */
-export interface NoteEvent extends BaseEvent {
+export interface NoteStep extends BaseStep {
   type: "note";
   
   /** Note content (supports markdown) */
@@ -357,90 +219,86 @@ export interface NoteEvent extends BaseEvent {
   
   /** Optional category */
   category?: NoteCategory;
-  
-  /** Reference to specific file/line */
-  reference?: NoteReference;
 }
 
 export type NoteCategory = 
   | "explanation" 
-  | "gotcha" 
   | "tip" 
   | "warning" 
+  | "decision" 
   | "todo";
 
-export interface NoteReference {
-  filePath: string;
-  startLine?: number;
-  endLine?: number;
-}
-
 /**
- * Named checkpoint/milestone in the session
+ * Milestone marker in the session
  */
-export interface CheckpointEvent extends BaseEvent {
+export interface CheckpointStep extends BaseStep {
   type: "checkpoint";
   
   /** Checkpoint name */
   name: string;
   
-  /** Description of what's been accomplished */
-  description?: string;
-  
-  /** Snapshot of all files at this point */
-  state?: BuildlogState;
+  /** What's been accomplished so far */
+  summary: string;
 }
 
 /**
  * Error that occurred during the session
  */
-export interface ErrorEvent extends BaseEvent {
+export interface ErrorStep extends BaseStep {
   type: "error";
   
   /** Error message */
   message: string;
   
-  /** Error category */
-  category: ErrorCategory;
-  
-  /** File where error occurred */
-  filePath?: string;
-  
-  /** Line number */
-  line?: number;
-  
-  /** Full stack trace */
-  stackTrace?: string;
+  /** How it was fixed */
+  resolution?: string;
   
   /** Whether this error was resolved during the session */
-  resolved?: boolean;
-  
-  /** ID of event that resolved it */
-  resolvedByEventId?: string;
+  resolved: boolean;
 }
 
-export type ErrorCategory = 
-  | "build" 
-  | "runtime" 
-  | "lint" 
-  | "type" 
-  | "test" 
-  | "other";
+// =============================================================================
+// OUTCOME
+// =============================================================================
+
+/**
+ * Summary of the session outcome
+ */
+export interface BuildlogOutcome {
+  /** Final status of the session */
+  status: "success" | "partial" | "failure" | "abandoned";
+  
+  /** Summary of what was built: "Built a working Stripe integration with checkout and webhooks" */
+  summary: string;
+  
+  /** Count of files created */
+  filesCreated: number;
+  
+  /** Count of files modified */
+  filesModified: number;
+  
+  /** Can another agent replicate this workflow? */
+  canReplicate: boolean;
+  
+  /** Any caveats for replication */
+  replicationNotes?: string;
+}
 
 // =============================================================================
 // UTILITY TYPES
 // =============================================================================
 
-/** All possible event types */
-export type EventType = BuildlogEvent["type"];
+/** All possible step types */
+export type StepType = BuildlogStep["type"];
 
-/** Map from event type string to event interface */
-export type EventByType<T extends EventType> = Extract<BuildlogEvent, { type: T }>;
+/** Map from step type string to step interface */
+export type StepByType<T extends StepType> = Extract<BuildlogStep, { type: T }>;
 
 /** Validation result */
 export interface ValidationResult {
   valid: boolean;
   errors?: ValidationError[];
+  warnings?: ValidationWarning[];
 }
 
 export interface ValidationError {
@@ -449,14 +307,35 @@ export interface ValidationError {
   code: string;
 }
 
+export interface ValidationWarning {
+  path: string;
+  message: string;
+  suggestion?: string;
+}
+
 /** Stats computed from a buildlog */
 export interface BuildlogStats {
+  format: BuildlogFormat;
   durationSeconds: number;
-  eventCount: number;
+  stepCount: number;
   promptCount: number;
-  responseCount: number;
-  fileCount: number;
-  linesAdded: number;
-  linesRemoved: number;
-  languages: string[];
+  actionCount: number;
+  terminalCount: number;
+  noteCount: number;
+  filesCreated: number;
+  filesModified: number;
+  isReplicable: boolean;
 }
+
+/** Size category for a buildlog */
+export type BuildlogSizeCategory = "tiny" | "small" | "medium" | "large";
+
+// =============================================================================
+// LEGACY TYPES (Deprecated - for v1 compatibility only)
+// =============================================================================
+
+/** @deprecated Use BuildlogStep instead */
+export type BuildlogEvent = BuildlogStep;
+
+/** @deprecated Use StepType instead */
+export type EventType = StepType;
