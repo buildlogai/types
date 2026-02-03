@@ -137,18 +137,19 @@ export interface BaseStep {
 
 /**
  * User prompt sent to AI - THE PRIMARY ARTIFACT
- * Always captured in full - prompts are the real artifact
+ * Always captured in full - prompts are the real artifact.
+ * Never summarize or truncate the prompt content.
  */
 export interface PromptStep extends BaseStep {
   type: "prompt";
   
-  /** The full prompt text (always captured) */
+  /** The full original prompt text (always captured in full - this is the primary artifact) */
   content: string;
   
   /** File names referenced as context (NOT contents) */
   context?: string[];
   
-  /** What the user is trying to accomplish */
+  /** Short title/summary for display (3-10 words). Optional - used for UI display only. */
   intent?: string;
 }
 
