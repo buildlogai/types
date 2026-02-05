@@ -1,6 +1,6 @@
 {
   "name": "@buildlog/types",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Portable workflow format for AI-assisted development",
   "author": "Buildlog <tech@run.fund>",
   "license": "MIT",

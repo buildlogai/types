@@ -81,6 +81,23 @@ export interface BuildlogMetadata {
   
   /** Other buildlogs this builds upon (URLs or IDs) */
   dependencies?: string[];
+
+  /** Source attribution - which tool created this buildlog */
+  source?: BuildlogSource;
+}
+
+/**
+ * Source attribution for the buildlog
+ */
+export interface BuildlogSource {
+  /** Tool that created this buildlog (e.g., '@buildlogai/mcp', 'vscode-extension', 'cli') */
+  tool: string;
+  
+  /** Version of the tool */
+  version: string;
+  
+  /** Client application if applicable (e.g., 'Claude Desktop', 'Cursor', 'OpenClaw') */
+  client?: string;
 }
 
 export interface BuildlogAuthor {
